@@ -1,5 +1,270 @@
 # Git LFS Changelog
 
+## 3.7.0 (26 June 2025)
+
+This release is a feature release which introduces several new options
+for fetching Git LFS objects, such as the ability to force objects to
+be re-downloaded and the capacity to output object URLs and HTTP
+metadata in JSON for external tools to consume.  This release also adds
+a configurable in-memory cache of file path pattern matches, which along
+with other changes can help reduce the time required to migrate large
+repositories to Git LFS.
+
+Git LFS now supports the same `.netrc` files on Windows as Git and
+curl, retries appropriately after all 429 status code HTTP responses,
+permits the use of symbolic links to Git's object storage during
+Git LFS migrations, and avoids spurious TLS verification errors when
+custom CA certificates are configured on macOS.
+
+Note that the v3.7.x series of Git LFS releases are the first for which
+we provide packages and support for versions of Linux distributions
+based on Red Hat Enterprise Linux (RHEL) 10, such as Rocky Linux 10.
+
+Note also that beginning with this release, we no longer provide packages
+or support for versions of any Linux distribution based on Debian 10
+("buster"), RHEL/CentOS 7, or SUSE Linux Enterprise Server (SLES) 12.
+
+This release is built using Go v1.24 and therefore on Linux systems
+now requires Linux kernel version 3.2 or later.
+
+We would like to extend a special thanks to the following open-source
+contributors:
+
+* @alexkad0 for improving the performance of our `migrate` command
+* @alingse for making our code simpler and more readable
+* @DarkDefender for refining the documentation of our `checkout` command
+* @fedirz for tidying up the documentation of our `migrate` command
+* @gergelyfabian for helping update our Go dependencies
+* @johanvdw for enhancing our `.netrc` file support on Windows
+* @Juneezee for updating our code to use new Go built-in functions
+* @LucasDondo for revising our Linux installation instructions
+* @m3ka24 for amending the documentation of our `prune` command
+* @philip-peterson for correcting our HTTP error reporting
+* @redsun82 for adding multiple new options to our `fetch` command
+* @slonopotamus for fixing JSON examples in our API documentation
+* @stanhu for addressing conflicts between custom CA certificates on macOS
+
+### Features
+
+* Cache a file path filter match result #6047 (@alexkad0)
+* Add `--refetch` option to `fetch` #5975 (@redsun82)
+* Add `--json` option to `fetch` #5974 (@redsun82)
+* Add `--dry-run` option to `fetch` #5973 (@redsun82)
+
+### Bugs
+
+* Verify TLS/SSL certificates using default Go support for macOS system root CAs #6049 (@chrisd8088)
+* Prefer .netrc on windows if present #6055 (@johanvdw)
+* Fix migrations where `.git/objects` is a symlink #6042 (@bk2204)
+* Honour 429 object transfer response `Retry-After` headers #6014 (@chrisd8088)
+
+### Misc
+
+* Update Linux distribution package list for v3.7.0 release (@chrisd8088)
+* Report missing objects consistently when pushing #6027 (@chrisd8088)
+* Use a git-update-ref script to update references #6048 (@alexkad0)
+* Drop unused generic stub function for cloning files #6050 (@chrisd8088)
+* Prevent conflicting curl macros in early Git version CI jobs #6040 (@chrisd8088)
+* pull: improve error message on failing checkout #5629 (@bk2204)
+* Fix language in code snippets in API docs #6035 (@slonopotamus)
+* build(deps): bump golang.org/x/net from 0.36.0 to 0.38.0 #6034 (@dependabot[bot])
+* Use single-target `Makefile` patterns for manual pages #6032 (@chrisd8088)
+* use direct value nil for error #6024 (@alingse)
+* Update minimum required Git version checks #6028 (@chrisd8088)
+* build(deps): bump golang.org/x/net from 0.33.0 to 0.36.0 #6012 (@dependabot[bot])
+* Upgrading x/crypto to v0.35.0 to solve CVE-2025-22869 #5997 (@gergelyfabian)
+* Upgrade to Go 1.24 #6013 (@chrisd8088)
+* Use constant format strings and fix HTTP error messages #5998 (@chrisd8088)
+* Remove command name prefixes from progress messages #5995 (@chrisd8088)
+* doc: Add missing "--to" argument in git-lfs-checkout example #6005 (@DarkDefender)
+* Replace min/max helpers with built-in min/max #5999 (@Juneezee)
+* Add security patch release process documentation #5987 (@chrisd8088)
+* Replace unused debug mode with trace logging #5989 (@chrisd8088)
+* Use default Ruby provided by Actions runners #5984 (@chrisd8088)
+* build(deps): bump azure/trusted-signing-action from 0.5.0 to 0.5.1 #5981 (@dependabot[bot])
+* Update workflows to use ARM runners and new Apple signing certificate #5977 (@chrisd8088)
+* docs/man/git-lfs-prune.adoc: fix --(no-)verify-unreachable description #5959 (@m3ka24)
+* docs/man/git-lfs-migrate.adoc: remove duplicate flag #5944 (@fedirz)
+* Upgrade `golang.org/x/net` from 0.23.0 to 0.33.0 #5940 (@gergelyfabian)
+* build(deps): bump golang.org/x/crypto from 0.21.0 to 0.31.0 #5935 (@dependabot[bot])
+* Simplify macOS CI jobs and specify Go toolchain version #5931 (@chrisd8088)
+* Tighten security of Actions workflows #5930 (@bk2204)
+* Corrected Pop!\_OS naming #5929 (@LucasDondo)
+* Update release process documentation and scripts #5920 (@chrisd8088)
+* Update license copyright dates and minimum supported Git version #5921 (@chrisd8088)
+
+## 3.6.0 (20 November 2024)
+
+This release is a feature release which includes support for multi-stage
+authentication with Git credential helpers (requires Git 2.46.0) and
+relative worktree paths (requires Git 2.48.0), a new object transfer batch
+size configuration option, better path handling when installing on Windows,
+more POSIX-compliant hook scripts, and improved performance with sparse
+checkouts, partial clones, and Git remotes with large numbers of tags.
+
+Note that the 3.6.x series of Git LFS releases will be the last releases
+for which we provide packages or support for versions of any Linux
+distribution based on either Red Hat Enterprise Linux 7 (RHEL 7) or
+SUSE Linux Enterprise Server 12 (SLES 12).
+
+Note also that the 3.6.x series of Git LFS releases may be the last
+releases for which we provide packages or support for versions of any
+Linux distribution based on Debian 10 ("buster").
+
+This release is built using Go v1.23 and therefore on macOS systems
+requires macOS 11 (Big Sur) or later, and on Windows systems requires
+at least Windows 10 or Windows Server 2016 (although Windows 8.1 may
+suffice).
+
+We would like to extend a special thanks to the following open-source
+contributors:
+
+* @blanet for fixing a crash bug when handling HTTP 429 responses
+* @bogomolets-owl for implementing a batch size configuration option
+* @ConcurrentCrab for preventing hung SSH transfer protocol connections
+* @jochenhz for ensuring files with Unicode names are not accidentally pruned
+* @pastelsky for optimizing performance of our pre-push hook
+* @rustfix for correcting some code comments
+* @rusttech for fixing an array size allocation bug
+* @xdavidwu for improving the portability of our tests and hooks
+
+### Features
+
+* git: improve sparse checkout support #5796 (@bk2204)
+* hook: fix newlines in command missing message #5886 (@xdavidwu)
+* Add batch size config value and use it everywhere #5876 (@bogomolets-owl)
+* Support relative paths to linked working trees #5898 (@chrisd8088)
+* git-lfs: omit tags in ls-remote; optimize pre-push #5863 (@pastelsky)
+* Support multistage authentication with a Git credential helper #5803 (@bk2204)
+* Support arbitrary HTTP credential schemes for authentication #5779 (@bk2204)
+* Optimize performance for scanning trees in partial clones #5699 (@bk2204)
+* Use lower-case file extensions in Windows installer path checks #5688 (@chrisd8088)
+* Match `PATH` case insensitively in Windows installer #5680 (@bk2204)
+
+### Bugs
+
+* Fix crash during pure SSH object transfer with multiple objects #5905 (@chrisd8088)
+* ssh: fix connection creation "leaking" connections #5816 (@ConcurrentCrab)
+* fix: fix slice init length #5874 (@rusttech)
+* Fix panic caused by accessing non-existent header #5804 (@blanet)
+* Avoid deadlocking on log scanning with lots of output on stderr #5738 (@bk2204)
+* checkout: gracefully handle files deleted from the index #5698 (@bk2204)
+* Fix logScanner fails to parse pointer file containing unicode chars #5655 (@jochenhz)
+
+### Misc
+
+* Fix improper negated test expressions and refine TLS client certificate tests #5914 (@chrisd8088)
+* Always capture clone logs in tests and remove or update stale workarounds #5906 (@chrisd8088)
+* Update Linux distribution package list for v3.6.0 release #5911 (@chrisd8088)
+* doc: mention the pointer size constraint #5900 (@bk2204)
+* Repair and restore all tests of cloning over TLS #5882 (@chrisd8088)
+* t: increase portability #5887 (@xdavidwu)
+* script/build-git: update Ubuntu 24.04 APT sources #5889 (@chrisd8088)
+* Run tests in parallel on Windows and always cleanup test directories #5879 (@chrisd8088)
+* Update release workflow to use Windows Trusted Signing Action #5873 (@chrisd8088)
+* Upgrade to Go 1.23 #5872 (@chrisd8088)
+* Use custom random data generator for all test objects and filenames #5868 (@chrisd8088)
+* Always build Git against custom libcurl in CI workflows on macOS #5866 (@chrisd8088)
+* Use expected version of Git on macOS in CI jobs #5813 (@chrisd8088)
+* Move @bk2204 to alumni #5808 (@bk2204)
+* docs/api: note API clients may send `charset` parameter in `Content-Type` header #5778 (@chrisd8088)
+* issue template: add more information we'd want to see #5728 (@bk2204)
+* .github/workflows: use actions/setup-go everywhere #5729 (@bk2204)
+* build(deps): bump golang.org/x/net from 0.17.0 to 0.23.0 #5718 (@dependabot[bot])
+* chore: fix function names in comment #5709 (@rustfix)
+* Include remote error when pure SSH protocol fails #5674 (@bk2204)
+* Build release assets with 1.22 #5673 (@bk2204)
+* Build release assets with Go 1.21 #5668 (@bk2204)
+* script/packagecloud: instantiate distro map properly #5662 (@bk2204)
+* Install msgfmt on Windows in CI and release workflows #5666 (@chrisd8088)
+
+## 3.5.0 (28 February 2024)
+
+This release is a feature release which includes support for LoongArch and
+RISC-V Linux binary tarballs, `FETCH_HEAD` as a remote source (from a plain
+`git fetch`), better support for detection of the system gitattributes file,
+and configuration options for the SSH protocol.  In this release, the
+`FETCH_HEAD` support is experimental and subject to change.
+
+We would like to extend a special thanks to the following open-source
+contributors:
+
+* @jochenhz for improvements to `git lfs prune`
+* @murez for improvements to our installation script
+* @qiangxuhui for tooling to build 64-bit LoongArch packages
+* @AaronDewes for tooling to build 64-bit RISC-V packages
+* @b-camacho for allowing `FETCH_HEAD` as a fallback remote source
+* @tigsikram for fixing some broken links
+* @aymanbagabas for fixing our SSH protocol documentation
+* @KyleFromKitware for improvements to the pure SSH protocol
+* @Juneezee for several code cleanups
+* @cmaves for improving performance of our progress indications
+* @QuLogic for improving completions and updating docs
+* @philip-peterson for helping detect invalid refs in `git lfs push`
+* @bogomolets-owl for helping include the reference specified in unlock requests
+
+### Features
+
+* Add --verify-unreachable option to LFS prune #5648 (@jochenhz)
+* attribute: warn if config exists after uninstalling #5635 (@bk2204)
+* Initialize sessions lazily #5634 (@bk2204)
+* Add a `--local` argument to install.sh #5618 (@murez)
+* Provide loong64 Binary Support #5607 (@qiangxuhui)
+* Improve locking performance #5561 (@bk2204)
+* Allow configuring the SSH protocol #5555 (@bk2204)
+* Add `FETCH_HEAD` as fallback remote source #5357 (@b-camacho)
+* Use `git var` to find system gitattributes file #5412 (@bk2204)
+* Add RISC-V support #5438 (@AaronDewes)
+
+### Bugs
+
+* Add support for homedir expansion in SSL key and cert paths #5657 (@bk2204)
+* Display correct status information when `git lfs ls-files` run in subdirectory #5653 (@chrisd8088)
+* Fix git lfs prune is deleting staged files in the index #5637 (@jochenhz)
+* Report invalid ref in `git lfs push` command #5639 (@chrisd8088)
+* Always close open files when cloning and spooling #5617 (@chrisd8088)
+* Fix git-scm.com links #5589 (@tigsikram)
+* doc: update ssh_adapter.md #5560 (@aymanbagabas)
+* track: don't modify `.gitattributes` with `--dry-run` #5559 (@bk2204)
+* Update project home page URL in Linux builds and remove unused spec files #5551 (@chrisd8088)
+* Retrieve endpoint URL only once when checking standalone transfer adapter configurations #5550 (@chrisd8088)
+* ssh: Specifically designate a master multiplex connection #5537 (@KyleFromKitware)
+* Include reference specifier in unlock requests #5538 (@chrisd8088)
+* tq/transfer: copy Id and Token #5534 (@KyleFromKitware)
+* Mock time in copy callback log file test #5524 (@chrisd8088)
+* track: reject attempts to modify `.gitattributes` #5515 (@bk2204)
+* Fix a panic in the credential code #5490 (@bk2204)
+* Avoid modifying the mtime of empty files #5491 (@bk2204)
+* Make track handle backslashes correctly on Unix #5482 (@bk2204)
+* Print an error when pushing with no refs #5437 (@bk2204)
+
+### Misc
+
+* workflows: update to Go 1.22 #5650 (@bk2204)
+* Distro updates for v3.5 #5647 (@bk2204)
+* Use Azure Code Signing for Windows release binaries #5630 (@bk2204)
+* Fix flaky test `t-credentials.sh` #5616 (@bk2204)
+* t: pipe random data to `base64(1)` to be compatible with macOS #5614 (@chrisd8088)
+* Replace deprecated `io/ioutil` functions #5595 (@Juneezee)
+* t/t-path.sh: avoid flaky test setup failure on Windows due to new Go path security checks #5611 (@chrisd8088)
+* build(deps): bump golang.org/x/crypto from 0.14.0 to 0.17.0 #5591 (@dependabot[bot])
+* Update release documentation and changelog summary script for patch releases #5590 (@chrisd8088)
+* Update notarization to use `notarytool` #5554 (@bk2204)
+* lfs: avoid unnecessary byte/string conversion #5552 (@Juneezee)
+* build(deps): bump golang.org/x/net from 0.7.0 to 0.17.0 #5541 (@dependabot[bot])
+* Limit CopyCallbackFile to print every 200 ms #5504 (@cmaves)
+* Update to Go 1.21 #5487 (@chrisd8088)
+* Add installation note about restarting shells on Windows for PATH changes #5507 (@chrisd8088)
+* Remove unused Docker scripts and update README #5506 (@chrisd8088)
+* Remove old and unused release script #5500 (@chrisd8088)
+* Update and expand documentation of the Git LFS release process #5452 (@chrisd8088)
+* Update cobra to 1.7.0 #5444 (@QuLogic)
+* Add FAQ entries for TLS data #5446 (@bk2204)
+* Remove vendoring instructions from contributing docs #5443 (@QuLogic)
+* FAQ: add an entry about proxies #5445 (@bk2204)
+* tq/transfer_test.go: enable and fix all tests #5442 (@chrisd8088)
+* Add a single source of truth for distro info #5439 (@bk2204)
+
 ## 3.4.0 (26 July 2023)
 
 This release is a feature release which includes support for generating

@@ -2,7 +2,6 @@ package tq
 
 import (
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,6 +37,7 @@ func (a *basicUploadAdapter) tempDir() string {
 func (a *basicUploadAdapter) WorkerStarting(workerNum int) (interface{}, error) {
 	return nil, nil
 }
+
 func (a *basicUploadAdapter) WorkerEnding(workerNum int, ctx interface{}) {
 }
 
@@ -47,7 +47,7 @@ func (a *basicUploadAdapter) DoTransfer(ctx interface{}, t *Transfer, cb Progres
 		return err
 	}
 	if rel == nil {
-		return errors.Errorf(tr.Tr.Get("No upload action for object: %s", t.Oid))
+		return errors.New(tr.Tr.Get("No upload action for object: %s", t.Oid))
 	}
 
 	req, err := a.newHTTPRequest("PUT", rel)
@@ -126,7 +126,7 @@ func (a *basicUploadAdapter) DoTransfer(ctx interface{}, t *Transfer, cb Progres
 		}
 
 		if res.StatusCode == 429 {
-			retLaterErr := errors.NewRetriableLaterError(err, res.Header["Retry-After"][0])
+			retLaterErr := errors.NewRetriableLaterError(err, res.Header.Get("Retry-After"))
 			if retLaterErr != nil {
 				return retLaterErr
 			}
@@ -142,14 +142,14 @@ func (a *basicUploadAdapter) DoTransfer(ctx interface{}, t *Transfer, cb Progres
 	}
 
 	if res.StatusCode > 299 {
-		return errors.Wrapf(nil, tr.Tr.Get("Invalid status for %s %s: %d",
+		return errors.New(tr.Tr.Get("Invalid status for %s %s: %d",
 			req.Method,
 			strings.SplitN(req.URL.String(), "?", 2)[0],
 			res.StatusCode,
 		))
 	}
 
-	io.Copy(ioutil.Discard, res.Body)
+	io.Copy(io.Discard, res.Body)
 	res.Body.Close()
 
 	return verifyUpload(a.apiClient, a.remote, t)
@@ -202,6 +202,7 @@ func (s *startCallbackReader) Read(p []byte) (n int, err error) {
 	}
 	return s.ReadSeekCloser.Read(p)
 }
+
 func newStartCallbackReader(r lfsapi.ReadSeekCloser, cb func() error) *startCallbackReader {
 	return &startCallbackReader{
 		ReadSeekCloser: r,

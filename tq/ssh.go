@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,13 +25,13 @@ type SSHBatchClient struct {
 }
 
 func (a *SSHBatchClient) batchInternal(args []string, batchLines []string) (int, []string, []string, error) {
-	conn := a.transfer.Connection(0)
-	if conn == nil {
-		return 0, nil, nil, errors.Errorf(tr.Tr.Get("could not get connection for batch request"))
+	conn, err := a.transfer.Connection(0)
+	if err != nil {
+		return 0, nil, nil, errors.Wrap(err, tr.Tr.Get("could not get connection for batch request"))
 	}
 	conn.Lock()
 	defer conn.Unlock()
-	err := conn.SendMessageWithLines("batch", args, batchLines)
+	err = conn.SendMessageWithLines("batch", args, batchLines)
 	if err != nil {
 		return 0, nil, nil, errors.Wrap(err, tr.Tr.Get("batch request"))
 	}
@@ -50,10 +49,8 @@ func (a *SSHBatchClient) Batch(remote string, bReq *batchRequest) (*BatchRespons
 		return bRes, nil
 	}
 
-	missing := make(map[string]bool)
 	batchLines := make([]string, 0, len(bReq.Objects))
 	for _, obj := range bReq.Objects {
-		missing[obj.Oid] = obj.Missing
 		batchLines = append(batchLines, fmt.Sprintf("%s %d", obj.Oid, obj.Size))
 	}
 
@@ -132,7 +129,6 @@ func (a *SSHBatchClient) Batch(remote string, bReq *batchRequest) (*BatchRespons
 	}
 
 	for _, obj := range bRes.Objects {
-		obj.Missing = missing[obj.Oid]
 		for _, a := range obj.Actions {
 			a.createdAt = requestedAt
 		}
@@ -159,7 +155,7 @@ type SSHAdapter struct {
 // Implementations can run some startup logic here & return some context if needed
 func (a *SSHAdapter) WorkerStarting(workerNum int) (interface{}, error) {
 	a.transfer.SetConnectionCountAtLeast(workerNum + 1)
-	return a.transfer.Connection(workerNum), nil
+	return workerNum, nil
 }
 
 // WorkerEnding is called when a worker goroutine is shutting down
@@ -181,24 +177,21 @@ func (a *SSHAdapter) DoTransfer(ctx interface{}, t *Transfer, cb ProgressCallbac
 	if authOkFunc != nil {
 		authOkFunc()
 	}
-	conn := ctx.(*ssh.PktlineConnection)
-	if conn == nil {
-		return errors.Errorf(tr.Tr.Get("could not get connection for transfer"))
-	}
+	workerNum := ctx.(int)
 	if a.adapterBase.direction == Upload {
-		return a.upload(t, conn, cb)
+		return a.upload(t, workerNum, cb)
 	} else {
-		return a.download(t, conn, cb)
+		return a.download(t, workerNum, cb)
 	}
 }
 
-func (a *SSHAdapter) download(t *Transfer, conn *ssh.PktlineConnection, cb ProgressCallback) error {
+func (a *SSHAdapter) download(t *Transfer, workerNum int, cb ProgressCallback) error {
 	rel, err := t.Rel("download")
 	if err != nil {
 		return err
 	}
 	if rel == nil {
-		return errors.Errorf(tr.Tr.Get("No download action for object: %s", t.Oid))
+		return errors.New(tr.Tr.Get("No download action for object: %s", t.Oid))
 	}
 	// Reserve a temporary filename. We need to make sure nobody operates on the file simultaneously with us.
 	f, err := tools.TempFile(a.tempDir(), t.Oid, a.fs)
@@ -213,15 +206,19 @@ func (a *SSHAdapter) download(t *Transfer, conn *ssh.PktlineConnection, cb Progr
 		os.Remove(tmpName)
 	}()
 
-	return a.doDownload(t, conn, f, cb)
+	return a.doDownload(t, workerNum, f, cb)
 }
 
 // doDownload starts a download. f is expected to be an existing file open in RW mode
-func (a *SSHAdapter) doDownload(t *Transfer, conn *ssh.PktlineConnection, f *os.File, cb ProgressCallback) error {
+func (a *SSHAdapter) doDownload(t *Transfer, workerNum int, f *os.File, cb ProgressCallback) error {
 	args := a.argumentsForTransfer(t, "download")
+	conn, err := a.transfer.Connection(workerNum)
+	if err != nil {
+		return err
+	}
 	conn.Lock()
 	defer conn.Unlock()
-	err := conn.SendMessage(fmt.Sprintf("get-object %s", t.Oid), args)
+	err = conn.SendMessage(fmt.Sprintf("get-object %s", t.Oid), args)
 	if err != nil {
 		return err
 	}
@@ -233,7 +230,7 @@ func (a *SSHAdapter) doDownload(t *Transfer, conn *ssh.PktlineConnection, f *os.
 		buffer := &bytes.Buffer{}
 		if data != nil {
 			io.CopyN(buffer, data, 1024)
-			io.Copy(ioutil.Discard, data)
+			io.Copy(io.Discard, data)
 		}
 		return errors.NewRetriableError(errors.New(tr.Tr.Get("got status %d when fetching OID %s: %s", status, t.Oid, buffer.String())))
 	}
@@ -267,7 +264,7 @@ func (a *SSHAdapter) doDownload(t *Transfer, conn *ssh.PktlineConnection, f *os.
 	hasher := tools.NewHashingReader(data)
 	written, err := tools.CopyWithCallback(f, hasher, t.Size, ccb)
 	if err != nil {
-		return errors.Wrapf(err, tr.Tr.Get("cannot write data to temporary file %q", dlfilename))
+		return errors.Wrap(err, tr.Tr.Get("cannot write data to temporary file %q", dlfilename))
 	}
 
 	if actual := hasher.Hash(); actual != t.Oid {
@@ -286,11 +283,15 @@ func (a *SSHAdapter) doDownload(t *Transfer, conn *ssh.PktlineConnection, f *os.
 	return err
 }
 
-func (a *SSHAdapter) verifyUpload(t *Transfer, conn *ssh.PktlineConnection) error {
+func (a *SSHAdapter) verifyUpload(t *Transfer, workerNum int) error {
 	args := a.argumentsForTransfer(t, "upload")
+	conn, err := a.transfer.Connection(workerNum)
+	if err != nil {
+		return err
+	}
 	conn.Lock()
 	defer conn.Unlock()
-	err := conn.SendMessage(fmt.Sprintf("verify-object %s", t.Oid), args)
+	err = conn.SendMessage(fmt.Sprintf("verify-object %s", t.Oid), args)
 	if err != nil {
 		return err
 	}
@@ -307,7 +308,7 @@ func (a *SSHAdapter) verifyUpload(t *Transfer, conn *ssh.PktlineConnection) erro
 	return nil
 }
 
-func (a *SSHAdapter) doUpload(t *Transfer, conn *ssh.PktlineConnection, f *os.File, cb ProgressCallback) (int, []string, []string, error) {
+func (a *SSHAdapter) doUpload(t *Transfer, workerNum int, f *os.File, cb ProgressCallback) (int, []string, []string, error) {
 	args := a.argumentsForTransfer(t, "upload")
 
 	// Ensure progress callbacks made while uploading
@@ -321,10 +322,14 @@ func (a *SSHAdapter) doUpload(t *Transfer, conn *ssh.PktlineConnection, f *os.Fi
 
 	cbr := tools.NewFileBodyWithCallback(f, t.Size, ccb)
 
+	conn, err := a.transfer.Connection(workerNum)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 	conn.Lock()
 	defer conn.Unlock()
 	defer cbr.Close()
-	err := conn.SendMessageWithData(fmt.Sprintf("put-object %s", t.Oid), args, cbr)
+	err = conn.SendMessageWithData(fmt.Sprintf("put-object %s", t.Oid), args, cbr)
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -332,13 +337,13 @@ func (a *SSHAdapter) doUpload(t *Transfer, conn *ssh.PktlineConnection, f *os.Fi
 }
 
 // upload starts an upload.
-func (a *SSHAdapter) upload(t *Transfer, conn *ssh.PktlineConnection, cb ProgressCallback) error {
+func (a *SSHAdapter) upload(t *Transfer, workerNum int, cb ProgressCallback) error {
 	rel, err := t.Rel("upload")
 	if err != nil {
 		return err
 	}
 	if rel == nil {
-		return errors.Errorf(tr.Tr.Get("No upload action for object: %s", t.Oid))
+		return errors.New(tr.Tr.Get("No upload action for object: %s", t.Oid))
 	}
 
 	f, err := os.OpenFile(t.Path, os.O_RDONLY, 0644)
@@ -347,7 +352,7 @@ func (a *SSHAdapter) upload(t *Transfer, conn *ssh.PktlineConnection, cb Progres
 	}
 	defer f.Close()
 
-	status, _, lines, err := a.doUpload(t, conn, f, cb)
+	status, _, lines, err := a.doUpload(t, workerNum, f, cb)
 	if err != nil {
 		return err
 	}
@@ -370,7 +375,7 @@ func (a *SSHAdapter) upload(t *Transfer, conn *ssh.PktlineConnection, cb Progres
 
 	}
 
-	return a.verifyUpload(t, conn)
+	return a.verifyUpload(t, workerNum)
 }
 
 func (a *SSHAdapter) argumentsForTransfer(t *Transfer, action string) []string {

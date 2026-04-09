@@ -6,7 +6,10 @@ git-lfs-lock - Set a file as "locked" on the Git LFS server
 
 == SYNOPSIS
 
-`git lfs lock` [options] <path>
+[source,role=synopsis,subs="verbatim,quotes"]
+----
+*git lfs lock* [_options_] _<path>_
+----
 
 == DESCRIPTION
 
@@ -24,6 +27,7 @@ config key in git-lfs-config(5) for details.
 `--remote=<name>`::
    Specify the Git LFS server to use. Ignored if the `lfs.url` config key is
    set.
+`-j`::
 `--json`::
   Writes lock info as JSON to STDOUT if the command exits successfully. Intended
   for interoperation with external tools. If the command returns with a non-zero

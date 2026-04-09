@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,7 +22,6 @@ import (
 	"github.com/git-lfs/git-lfs/v3/config"
 	"github.com/git-lfs/git-lfs/v3/creds"
 	"github.com/git-lfs/git-lfs/v3/errors"
-	"github.com/git-lfs/git-lfs/v3/tools"
 	"github.com/git-lfs/git-lfs/v3/tr"
 	"github.com/rubyist/tracerx"
 	"golang.org/x/net/http2"
@@ -215,7 +215,7 @@ func (c *Client) sshResolveWithRetries(e Endpoint, method string) (*sshAuthRespo
 		return nil, errors.New("git-lfs-authenticate has been disabled by request")
 	}
 
-	requests := tools.MaxInt(0, c.sshTries) + 1
+	requests := max(0, c.sshTries) + 1
 	for i := 0; i < requests; i++ {
 		sshRes, err = c.SSH.Resolve(e, method)
 		if err == nil {
@@ -248,7 +248,9 @@ func (c *Client) ExtraHeadersFor(req *http.Request) http.Header {
 
 	for k, vs := range extraHeaders {
 		for _, v := range vs {
-			copy[k] = append(copy[k], v)
+			if !slices.Contains(copy[k], v) {
+				copy[k] = append(copy[k], v)
+			}
 		}
 	}
 	return copy
@@ -293,7 +295,7 @@ func (c *Client) DoWithRedirect(cli *http.Client, req *http.Request, remote stri
 
 	var res *http.Response
 
-	requests := tools.MaxInt(0, retries) + 1
+	requests := max(0, retries) + 1
 	for i := 0; i < requests; i++ {
 		res, err = cli.Do(req)
 		if err == nil {
@@ -470,7 +472,10 @@ func (c *Client) Transport(u *url.URL, access creds.AccessMode) (http.RoundTripp
 
 	if isClientCertEnabledForHost(c, host) {
 		tracerx.Printf("http: client cert for %s", host)
-		cert := getClientCertForHost(c, host)
+		cert, err := getClientCertForHost(c, host)
+		if err != nil {
+			return nil, err
+		}
 		if cert != nil {
 			tr.TLSClientConfig.Certificates = []tls.Certificate{*cert}
 			tr.TLSClientConfig.BuildNameToCertificate()
@@ -480,7 +485,7 @@ func (c *Client) Transport(u *url.URL, access creds.AccessMode) (http.RoundTripp
 	if isCertVerificationDisabledForHost(c, host) {
 		tr.TLSClientConfig.InsecureSkipVerify = true
 	} else {
-		tr.TLSClientConfig.RootCAs = getRootCAsForHost(c, host)
+		tr.TLSClientConfig.RootCAs = getRootCAsForHostFromGitconfig(c, host)
 	}
 
 	if err := c.configureProtocols(u, tr); err != nil {
@@ -622,6 +627,11 @@ func (e testEnv) GetAll(key string) []string {
 func (e testEnv) Int(key string, def int) int {
 	s, _ := e.Get(key)
 	return config.Int(s, def)
+}
+
+func (e testEnv) Int64(key string, def int64) int64 {
+	s, _ := e.Get(key)
+	return config.Int64(s, def)
 }
 
 func (e testEnv) Bool(key string, def bool) bool {

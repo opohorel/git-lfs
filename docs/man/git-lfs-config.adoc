@@ -91,7 +91,8 @@ keepalive connections. Default: 30 minutes.
 +
 When using the pure SSH-based protocol, whether to multiplex requests
 over a single connection when possible. This option requires the use of
-OpenSSH or a compatible SSH client. Default: true.
+OpenSSH or a compatible SSH client. Default: false on Windows, otherwise
+true.
 * `lfs.ssh.retries`
 +
 Specifies the number of times Git LFS will attempt to obtain
@@ -105,6 +106,14 @@ interpreted as the password.
 +
 Enables in-memory SSH and Git Credential caching for a single 'git lfs'
 command. Default: enabled.
+* `lfs.pathFilterCacheSize`
++
+Sets the size of the in-memory cache of results from matching file paths
+against the filter defined by the `lfs.fetchInclude` and `lfs.fetchExclude`
+options, or for commands which accept them, by the `--include` and `--exclude`
+command-line options or their `-I` and `-X` equivalents.
+Set to `0` or `none` to disable the cache, or to `unlimited` to allow
+the cache to grow without bound.  Default: 10,000 unique file paths.
 * `lfs.storage`
 +
 Allow override LFS storage directory. Non-absolute path is relativized
@@ -160,7 +169,7 @@ should point to the process you wish to invoke. The protocol between the
 git-lfs client and the custom transfer process is documented at
 https://github.com/git-lfs/git-lfs/blob/main/docs/custom-transfers.md
 +
-must be a unique identifier that the LFS server understands. When
+The `<name>` must be a unique identifier that the LFS server understands. When
 calling the LFS API the client will include a list of supported transfer
 types. If the server also supports this named transfer type, it will
 select it and actions returned from the API will be in relation to that
@@ -211,6 +220,15 @@ If set to true, this enables rewriting href of LFS objects using
 `url.*.insteadof/pushinsteadof` config. `pushinsteadof` is used only for
 uploading, and `insteadof` is used for downloading and for uploading
 when `pushinsteadof` is not set.
+* `lfs.transfer.batchSize`
++
+The number of objects to download/upload sent in a single batch request
+to the LFS server. Default is 100.
++
+This value should be changed with caution, as it can have a significant
+impact on the performance of the LFS server and the server is free to
+return an HTTP 413 status code if this value is too high as the Batch
+API specification states.
 
 === Push settings
 
@@ -272,6 +290,9 @@ called if --verify-remote is enabled.
 * `lfs.pruneverifyremotealways`
 +
 Always run `git lfs prune` as if `--verify-remote` was provided.
+* `lfs.pruneverifyunreachablealways`
++
+Always run `git lfs prune` as if `--verify-unreachable` was provided.
 
 === Extensions
 

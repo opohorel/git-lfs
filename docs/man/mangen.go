@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,7 +22,7 @@ func warnf(w io.Writer, format string, a ...interface{}) {
 	fmt.Fprintf(w, format, a...)
 }
 
-func readManDir() (string, []os.FileInfo) {
+func readManDir() (string, []os.DirEntry) {
 	rootDirs := []string{
 		"..",
 		"/tmp/docker_run/git-lfs",
@@ -31,7 +30,7 @@ func readManDir() (string, []os.FileInfo) {
 
 	var err error
 	for _, rootDir := range rootDirs {
-		fs, err := ioutil.ReadDir(filepath.Join(rootDir, "docs", "man"))
+		fs, err := os.ReadDir(filepath.Join(rootDir, "docs", "man"))
 		if err == nil {
 			return rootDir, fs
 		}
@@ -77,6 +76,8 @@ func main() {
 	manlinkregex := regexp.MustCompile(`(git)(?:-(lfs))?-([a-z\-]+)\(\d\)`)
 	// source blocks
 	sourceblockregex := regexp.MustCompile(`\[source(,.*)?\]`)
+	// synopsis source block quotes substitution group syntax
+	synopsisQuotesRegex := regexp.MustCompile(`[\*_]+`)
 	// anchors
 	anchorregex := regexp.MustCompile(`\[\[(.+)\]\]`)
 	count := 0
@@ -100,6 +101,7 @@ func main() {
 			skipNextLineIfBlank := false
 			lastLineWasList := false
 			isSourceBlock := false
+			isSynopsisSourceBlock := false
 			sourceBlockLine := ""
 		scanloop:
 			for scanner.Scan() {
@@ -159,6 +161,9 @@ func main() {
 
 				if sourceblockmatches := sourceblockregex.FindStringIndex(line); sourceblockmatches != nil {
 					isSourceBlock = true
+					if strings.Contains(line, "role=synopsis") {
+						isSynopsisSourceBlock = true
+					}
 					continue
 				}
 
@@ -180,6 +185,7 @@ func main() {
 					line = ""
 					continue
 				} else if sourceBlockLine != "" && line == sourceBlockLine {
+					isSynopsisSourceBlock = false
 					line = ""
 					sourceBlockLine = ""
 				}
@@ -189,6 +195,10 @@ func main() {
 					line = strings.Replace(line, invis, "", -1)
 				}
 				line = strings.TrimSuffix(line, " +")
+
+				if isSynopsisSourceBlock {
+					line = synopsisQuotesRegex.ReplaceAllString(line, "")
+				}
 
 				// indent bullets and definition lists
 				if strings.HasPrefix(line, "*") {

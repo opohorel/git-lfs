@@ -55,18 +55,34 @@ refute_pointer() {
   fi
 }
 
+# local_object_path computes the path to the local storage for an oid
+# $ local_object_path "some-oid"
+local_object_path() {
+  local oid="$1"
+  local cfg=`git lfs env | grep LocalMediaDir`
+  echo "${cfg#LocalMediaDir=}/${oid:0:2}/${oid:2:2}/$oid"
+}
+
 # assert_local_object confirms that an object file is stored for the given oid &
 # has the correct size
 # $ assert_local_object "some-oid" size
 assert_local_object() {
   local oid="$1"
   local size="$2"
-  local cfg=`git lfs env | grep LocalMediaDir`
-  local f="${cfg:14}/${oid:0:2}/${oid:2:2}/$oid"
+  local f="$(local_object_path "$oid")"
   actualsize=$(wc -c <"$f" | tr -d '[[:space:]]')
   if [ "$size" != "$actualsize" ]; then
     exit 1
   fi
+}
+
+# is_valid_oid() confirms that an object ID is a valid SHA-256 hash, for use
+# in our refute_*_object() functions which otherwise just check that an
+# object file or record does not exist
+is_valid_oid() {
+  local oid="$1"
+
+  printf "%s" "$oid" | grep -q "^[0-9a-f]\{64\}$"
 }
 
 # refute_local_object confirms that an object file is NOT stored for an oid.
@@ -78,9 +94,10 @@ assert_local_object() {
 refute_local_object() {
   local oid="$1"
   local size="$2"
-  local cfg=`git lfs env | grep LocalMediaDir`
-  local regex="LocalMediaDir=(\S+)"
-  local f="${cfg:14}/${oid:0:2}/${oid:2:2}/$oid"
+
+  is_valid_oid "$oid"
+
+  local f="$(local_object_path "$oid")"
   if [ -e $f ]; then
     if [ -z "$size" ]; then
       exit 1
@@ -98,8 +115,9 @@ refute_local_object() {
 # $ delete_local_object "some-oid"
 delete_local_object() {
   local oid="$1"
-  local cfg=`git lfs env | grep LocalMediaDir`
-  local f="${cfg:14}/${oid:0:2}/${oid:2:2}/$oid"
+  local f="$(local_object_path "$oid")"
+  # Note that so long as we do not use "rm -f" we do not need to first
+  # check that the object ID is valid or that file exists.
   rm "$f"
 }
 
@@ -107,8 +125,9 @@ delete_local_object() {
 # $ corrupt_local_object "some-oid"
 corrupt_local_object() {
   local oid="$1"
-  local cfg=`git lfs env | grep LocalMediaDir`
-  local f="${cfg:14}/${oid:0:2}/${oid:2:2}/$oid"
+  local f="$(local_object_path "$oid")"
+
+  [ -f "$f" ]
   cp /dev/null "$f"
 }
 
@@ -120,6 +139,10 @@ corrupt_local_object() {
 refute_server_object() {
   local reponame="$1"
   local oid="$2"
+
+  [ -d "$(canonical_path "$REMOTEDIR/$reponame.git")" ]
+  is_valid_oid "$oid"
+
   curl -v "$GITSERVER/$reponame.git/info/lfs/objects/batch" \
     -u "user:pass" \
     -o http.json \
@@ -130,7 +153,7 @@ refute_server_object() {
     -H "X-Ignore-Retries: true" 2>&1 |
     tee http.log
 
-  [ "0" = "$(grep -c "download" http.json)" ] || {
+  [ 0 -eq "$(grep -c "download" http.json)" ] || {
     cat http.json
     exit 1
   }
@@ -143,6 +166,10 @@ refute_server_object() {
 delete_server_object() {
   local reponame="$1"
   local oid="$2"
+
+  [ -d "$(canonical_path "$REMOTEDIR/$reponame.git")" ]
+  is_valid_oid "$oid"
+
   curl -v "$GITSERVER/$reponame.git/info/lfs/objects/$oid" \
     -X DELETE \
     -u "user:pass" \
@@ -174,6 +201,56 @@ assert_server_object() {
     cat http.json
     exit 1
   }
+}
+
+# assert_remote_object() confirms that an object file with the given OID and
+# size is stored in the "remote" copy of a repository
+assert_remote_object() {
+  local reponame="$1"
+  local oid="$2"
+  local size="$3"
+  local destination="$(canonical_path "$REMOTEDIR/$reponame.git")"
+
+  pushd "$destination"
+    local f="$(local_object_path "$oid")"
+    actualsize="$(wc -c <"$f" | tr -d '[[:space:]]')"
+    [ "$size" -eq "$actualsize" ]
+  popd
+}
+
+# refute_remote_object() confirms that an object file with the given OID
+# is not stored in the "remote" copy of a repository
+refute_remote_object() {
+  local reponame="$1"
+  local oid="$2"
+
+  is_valid_oid "$oid"
+
+  local destination="$(canonical_path "$REMOTEDIR/$reponame.git")"
+
+  pushd "$destination"
+    local f="$(local_object_path "$oid")"
+    if [ -e $f ]; then
+      exit 1
+    fi
+  popd
+}
+
+# Set rate limit counts on the LFS server. HTTP log is written to http.log.
+#
+#   $ reset_server_rate_limit "api" "direction" "reponame" "oid" "num-tokens"
+set_server_rate_limit() {
+  local api="$1"
+  local direction="$2"
+  local reponame="$3"
+  local oid="$4"
+  local tokens="$5"
+
+  local query="api=$api&direction=$direction&repo=$reponame&oid=$oid&tokens=$tokens"
+
+  curl -v "$GITSERVER/limits/?$query" 2>&1 | tee http.log
+
+  grep "200 OK" http.log
 }
 
 check_server_lock_ssh() {
@@ -287,8 +364,8 @@ assert_attributes_count() {
   local count="$3"
 
   pattern="\(*.\)\?$fileext\(.*\)$attrib"
-  actual=$(grep -e "$pattern" .gitattributes | wc -l)
-  if [ "$(printf "%d" "$actual")" != "$count" ]; then
+  actual="$(grep -c -e "$pattern" .gitattributes || true)"
+  if [ "$(printf "%d" "$actual")" -ne "$count" ]; then
     echo "wrong number of $attrib entries for $fileext"
     echo "expected: $count actual: $actual"
     cat .gitattributes
@@ -326,11 +403,28 @@ assert_hooks() {
   [ -x "$git_root/hooks/pre-push" ]
 }
 
+assert_clean_index() {
+  [ -z "$(git diff-index --cached HEAD)" ]
+}
+
+assert_clean_worktree() {
+  [ -z "$(git diff-index HEAD)" ]
+}
+
+assert_clean_worktree_with_exceptions() {
+  local exceptions="$1"
+
+  [ 0 -eq "$(git diff-index HEAD | grep -c -v -E "$exceptions")" ]
+}
+
 assert_clean_status() {
+  assert_clean_worktree
+
   status="$(git status)"
-  echo "$status" | grep "working tree clean" || {
+  echo "$status" | grep "working \(directory\|tree\) clean" || {
     echo $status
     git lfs status
+    exit 1
   }
 }
 
@@ -417,12 +511,16 @@ clone_repo() {
   local reponame="$1"
   local dir="$2"
   echo "clone local git repository $reponame to $dir"
-  out=$(git clone "$GITSERVER/$reponame" "$dir" 2>&1)
+  git clone "$GITSERVER/$reponame" "$dir" 2>&1 | tee clone.log
+
+  if [ "0" -ne "${PIPESTATUS[0]}" ]; then
+    return 1
+  fi
+
   cd "$dir"
+  mv ../clone.log .
 
   git config credential.helper lfstest
-  echo "$out" > clone.log
-  echo "$out"
 }
 
 # clone_repo_url clones a Git repository to the subdirectory $dir under $TRASHDIR.
@@ -433,12 +531,16 @@ clone_repo_url() {
   local repo="$1"
   local dir="$2"
   echo "clone git repository $repo to $dir"
-  out=$(git clone "$repo" "$dir" 2>&1)
+  git clone "$repo" "$dir" 2>&1 | tee clone.log
+
+  if [ "0" -ne "${PIPESTATUS[0]}" ]; then
+    return 1
+  fi
+
   cd "$dir"
+  mv ../clone.log .
 
   git config credential.helper lfstest
-  echo "$out" > clone.log
-  echo "$out"
 }
 
 # clone_repo_ssl clones a repository from the test Git server to the subdirectory
@@ -450,13 +552,16 @@ clone_repo_ssl() {
   local reponame="$1"
   local dir="$2"
   echo "clone local git repository $reponame to $dir"
-  out=$(git clone "$SSLGITSERVER/$reponame" "$dir" 2>&1)
+  git clone "$SSLGITSERVER/$reponame" "$dir" 2>&1 | tee clone_ssl.log
+
+  if [ "0" -ne "${PIPESTATUS[0]}" ]; then
+    return 1
+  fi
+
   cd "$dir"
+  mv ../clone_ssl.log .
 
   git config credential.helper lfstest
-
-  echo "$out" > clone_ssl.log
-  echo "$out"
 }
 
 # clone_repo_clientcert clones a repository from the test Git server to the subdirectory
@@ -468,26 +573,16 @@ clone_repo_clientcert() {
   local reponame="$1"
   local dir="$2"
   echo "clone $CLIENTCERTGITSERVER/$reponame to $dir"
-  set +e
-  out=$(git clone "$CLIENTCERTGITSERVER/$reponame" "$dir" 2>&1)
-  res="${PIPESTATUS[0]}"
-  set -e
+  git clone "$CLIENTCERTGITSERVER/$reponame" "$dir" 2>&1 | tee clone_client_cert.log
 
-  if [ "0" -eq "$res" ]; then
-    cd "$dir"
-    echo "$out" > clone_client_cert.log
-
-    git config credential.helper lfstest
-    return 0
+  if [ "0" -ne "${PIPESTATUS[0]}" ]; then
+    return 1
   fi
 
-  echo "$out" > clone_client_cert.log
-  if [ $(grep -c "NSInvalidArgumentException" clone_client_cert.log) -gt 0 ]; then
-    echo "client-cert-mac-openssl" > clone_client_cert.log
-    return 0
-  fi
+  cd "$dir"
+  mv ../clone_client_cert.log .
 
-  return 1
+  git config credential.helper lfstest
 }
 
 # setup_remote_repo_with_file creates a remote repo, clones it locally, commits
@@ -557,6 +652,11 @@ write_creds_file() {
   fi
 }
 
+setup_creds() {
+  mkdir -p "$CREDSDIR"
+  write_creds_file ":user:pass" "$CREDSDIR/127.0.0.1"
+}
+
 # setup initializes the clean, isolated environment for integration tests.
 setup() {
   cd "$ROOTDIR"
@@ -569,17 +669,15 @@ setup() {
   git lfs version | sed -e 's/^/# /g'
   git version | sed -e 's/^/# /g'
 
-  if [ -z "$GIT_LFS_NO_TEST_COUNT" ]; then
-    LFSTEST_URL="$LFS_URL_FILE" \
-    LFSTEST_SSL_URL="$LFS_SSL_URL_FILE" \
-    LFSTEST_CLIENT_CERT_URL="$LFS_CLIENT_CERT_URL_FILE" \
-    LFSTEST_DIR="$REMOTEDIR" \
-    LFSTEST_CERT="$LFS_CERT_FILE" \
-    LFSTEST_CLIENT_CERT="$LFS_CLIENT_CERT_FILE" \
-    LFSTEST_CLIENT_KEY="$LFS_CLIENT_KEY_FILE" \
-    LFSTEST_CLIENT_KEY_ENCRYPTED="$LFS_CLIENT_KEY_FILE_ENCRYPTED" \
-      lfstest-count-tests increment
-  fi
+  LFSTEST_URL="$LFS_URL_FILE" \
+  LFSTEST_SSL_URL="$LFS_SSL_URL_FILE" \
+  LFSTEST_CLIENT_CERT_URL="$LFS_CLIENT_CERT_URL_FILE" \
+  LFSTEST_DIR="$REMOTEDIR" \
+  LFSTEST_CERT="$LFS_CERT_FILE" \
+  LFSTEST_CLIENT_CERT="$LFS_CLIENT_CERT_FILE" \
+  LFSTEST_CLIENT_KEY="$LFS_CLIENT_KEY_FILE" \
+  LFSTEST_CLIENT_KEY_ENCRYPTED="$LFS_CLIENT_KEY_FILE_ENCRYPTED" \
+    lfstest-count-tests increment
 
   wait_for_file "$LFS_URL_FILE"
   wait_for_file "$LFS_SSL_URL_FILE"
@@ -597,6 +695,10 @@ setup() {
     mkdir "$HOME"
   fi
 
+  # do not let Git use a different configuration file
+  unset GIT_CONFIG
+  unset XDG_CONFIG_HOME
+
   if [ ! -f $HOME/.gitconfig ]; then
     git lfs install --skip-repo
     git config --global credential.usehttppath true
@@ -604,19 +706,11 @@ setup() {
     git config --global user.name "Git LFS Tests"
     git config --global user.email "git-lfs@example.com"
     git config --global http.sslcainfo "$LFS_CERT_FILE"
-    git config --global http.$LFS_CLIENT_CERT_URL/.sslKey "$LFS_CLIENT_KEY_FILE"
-    git config --global http.$LFS_CLIENT_CERT_URL/.sslCert "$LFS_CLIENT_CERT_FILE"
-    git config --global http.$LFS_CLIENT_CERT_URL/.sslVerify "false"
     git config --global init.defaultBranch main
   fi | sed -e 's/^/# /g'
 
   # setup the git credential password storage
-  local certpath="$(echo "$LFS_CLIENT_CERT_FILE" | tr / -)"
-  local keypath="$(echo "$LFS_CLIENT_KEY_FILE_ENCRYPTED" | tr / -)"
-  mkdir -p "$CREDSDIR"
-  write_creds_file "user:pass" "$CREDSDIR/127.0.0.1"
-  write_creds_file ":pass" "$CREDSDIR/--$certpath"
-  write_creds_file ":pass" "$CREDSDIR/--$keypath"
+  setup_creds
 
   echo "#"
   echo "# HOME: $HOME"
@@ -638,10 +732,13 @@ shutdown() {
   # every t/t-*.sh file should cleanup its trashdir
   [ -z "$KEEPTRASH" ] && rm -rf "$TRASHDIR"
 
-  if [ -z "$GIT_LFS_NO_TEST_COUNT" ]; then
-    LFSTEST_DIR="$REMOTEDIR" \
-    LFS_URL_FILE="$LFS_URL_FILE" \
-      lfstest-count-tests decrement
+  LFSTEST_DIR="$REMOTEDIR" \
+  LFS_URL_FILE="$LFS_URL_FILE" \
+    lfstest-count-tests decrement
+
+  # delete entire lfs test root if we created it (double check pattern)
+  if [ -z "$KEEPTRASH" ] && [ "$RM_GIT_LFS_TEST_DIR" = "yes" ] && [[ $GIT_LFS_TEST_DIR == *"$TEMPDIR_PREFIX"* ]]; then
+    rm -rf "$GIT_LFS_TEST_DIR"
   fi
 }
 
@@ -649,6 +746,31 @@ tap_show_plan() {
   local tests="$1"
 
   printf "1..%i\n" "$tests"
+}
+
+skip_if_root_or_admin() {
+  local test_description="$1"
+
+  if [ "$IS_WINDOWS" -eq 1 ]; then
+    # The sfc.exe (System File Checker) command should be available on all
+    # modern Windows systems, and when run without arguments, returns help
+    # text, but only when the user has Administrator privileges.  By checking
+    # the help text, if any, for the /SCANNOW (i.e., "scan now") option
+    # common to all versions of the command, we can determine if the
+    # current user has Administrator privileges.
+    #
+    # Adapted from: https://stackoverflow.com/a/58846650
+    #               https://stackoverflow.com/a/21295806
+    SFC=$(sfc | tr -d '\0' | grep "SCANNOW")
+    if [ -n "$SFC" ]; then
+      printf "skip: '%s' test requires non-administrator privileges\n" \
+        "$test_description"
+      exit 0
+    fi
+  elif [ "$EUID" -eq 0 ]; then
+    printf "skip: '%s' test requires non-root user\n" "$test_description"
+    exit 0
+  fi
 }
 
 ensure_git_version_isnt() {
@@ -829,6 +951,45 @@ has_test_dir() {
   fi
 }
 
+has_native_symlinks() {
+  if [ -z "$NATIVE_SYMLINKS" ]; then
+    if [ "$IS_WINDOWS" -eq 1 ]; then
+      # On Windows, we need to enable native symlink support in Cygwin or MSYS2,
+      # without falling back to default Cygwin symlink emulation.  If this mode
+      # is not available, we should skip our tests with symbolic links.
+      #
+      # https://cygwin.com/cygwin-ug-net/using.html#pathnames-symlinks
+      # https://www.msys2.org/docs/symlinks/
+      # https://learn.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development
+      export CYGWIN="winsymlinks:nativestrict${CYGWIN:+ $CYGWIN}"
+      export MSYS="winsymlinks:nativestrict${MSYS:+ $MSYS}"
+
+      touch testfile.tmp
+      ln -s testfile.tmp testlink.tmp
+
+      if [ $(fsutil reparsepoint query testlink.tmp | grep -c "Tag value: Symbolic Link") -eq 0 ]; then
+        NATIVE_SYMLINKS=0
+      else
+        NATIVE_SYMLINKS=1
+      fi
+
+      rm -f testfile.tmp testlink.tmp
+    else
+      NATIVE_SYMLINKS=1
+    fi
+  fi
+
+  if [ "$NATIVE_SYMLINKS" -ne 1 ]; then
+    return 1
+  else
+    return 0
+  fi
+}
+
+skip_if_symlinks_unsupported() {
+  has_native_symlinks || exit 0
+}
+
 add_symlink() {
   local src=$1
   local dest=$2
@@ -838,6 +999,27 @@ add_symlink() {
 
   git update-index --add --cacheinfo 120000 "$hashsrc" "$prefix$dest"
   git checkout -- "$dest"
+}
+
+setup_case_inverter_extension() {
+  export LFSTEST_EXT_LOG="$TRASHDIR/caseinverterextension.log"
+
+  git config lfs.extension.caseinverter.clean \
+    "lfstest-caseinverterextension clean -- %f"
+  git config lfs.extension.caseinverter.smudge \
+    "lfstest-caseinverterextension smudge -- %f"
+  git config lfs.extension.caseinverter.priority 0
+}
+
+case_inverter_extension_pointer() {
+  local ext_oid_line="ext-0-caseinverter sha256:$1"
+  local base_pointer="$(pointer "$2" "$3")"
+
+  printf "%s" "$base_pointer" | sed "s/^oid /$ext_oid_line\noid /"
+}
+
+invert_case() {
+  printf "%s" "$1" | tr "[:lower:][:upper:]" "[:upper:][:lower:]"
 }
 
 urlify() {

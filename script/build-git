@@ -4,24 +4,67 @@ DIR="$1"
 
 case $(uname -s) in
   Darwin)
-    brew install curl zlib pcre2 openssl
-    brew link --force curl zlib pcre2 openssl;;
+    CURLDIR="$(brew --prefix curl)";;
   Linux)
     export DEBIAN_FRONTEND=noninteractive
-    sed -e 's/^deb/deb-src/' /etc/apt/sources.list | sudo tee /etc/apt/sources.list.d/src.list
+    if test -f /etc/apt/sources.list.d/ubuntu.sources; then
+      # Ubuntu 24.04
+      sed -e 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources | sudo tee /etc/apt/sources.list.d/ubuntu.sources
+    else
+      # Ubuntu 22.04 and earlier
+      sed -e 's/^deb/deb-src/' /etc/apt/sources.list | sudo tee /etc/apt/sources.list.d/src.list
+    fi
     sudo apt-get update
     sudo apt-get install build-essential
     sudo apt-get -y build-dep git;;
 esac
 
+GIT_INSTALL_PATH="${GIT_INSTALL_DIR:-"/usr/local"}"
+
 cd "$DIR"
+
+# Hide macros defined in Git v2.33.x and earlier which now conflict with
+# macros defined by curl since v8.13.0.
+if grep -q "CURLOPT_USE_SSL" http.h; then
+  cat <<EOF | patch -p1
+--- a/http.h
++++ b/http.h
+@@ -45,10 +45,12 @@
+  * CURLOPT_USE_SSL was known as CURLOPT_FTP_SSL up to 7.16.4,
+  * and the constants were known as CURLFTPSSL_*
+ */
++/*
+ #if !defined(CURLOPT_USE_SSL) && defined(CURLOPT_FTP_SSL)
+ #define CURLOPT_USE_SSL CURLOPT_FTP_SSL
+ #define CURLUSESSL_TRY CURLFTPSSL_TRY
+ #endif
++*/
+
+ struct slot_results {
+	CURLcode curl_result;
+EOF
+fi
+
 printf "%s\n" \
   "NO_GETTEXT=YesPlease" \
   "NO_OPENSSL=YesPlease" \
-  "prefix=/usr/local" \
+  "prefix=$GIT_INSTALL_PATH" \
   > config.mak
-make -j2
+if test -n "$CURLDIR"; then
+  printf "%s\n" \
+    "CURLDIR=$CURLDIR" \
+    >> config.mak
+fi
+make -j4
 sudo make install
 
 echo "Git version:"
-git --version
+git --version --build-options
+
+echo "Git library dependencies:"
+case $(uname -s) in
+  Darwin)
+    otool -L "$(git --exec-path)/git-http-fetch";;
+  Linux)
+    ldd "$(git --exec-path)/git-http-fetch";;
+esac

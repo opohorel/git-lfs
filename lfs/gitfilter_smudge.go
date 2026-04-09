@@ -15,37 +15,30 @@ import (
 	"github.com/rubyist/tracerx"
 )
 
-func (f *GitFilter) SmudgeToFile(filename string, ptr *Pointer, download bool, manifest tq.Manifest, cb tools.CopyCallback) error {
-	tools.MkdirAll(filepath.Dir(filename), f.cfg)
-
-	if stat, _ := os.Stat(filename); stat != nil {
+func (f *GitFilter) SmudgeToFile(path string, ptr *WrappedPointer, download bool, manifest tq.Manifest, cb tools.CopyCallback) error {
+	// When no pointer file exists on disk, we should use the permissions
+	// defined for the file in Git, since the executable mode may be set.
+	// However, to conform with our legacy behaviour, we do not do this
+	// at present.
+	var mode os.FileMode = 0666
+	if stat, _ := os.Lstat(path); stat != nil && stat.Mode().IsRegular() {
 		if ptr.Size == 0 && stat.Size() == 0 {
 			return nil
 		}
 
-		if stat.Mode()&0200 == 0 {
-			if err := os.Chmod(filename, stat.Mode()|0200); err != nil {
-				return errors.Wrap(err,
-					tr.Tr.Get("Could not restore write permission"))
-			}
-
-			// When we're done, return the file back to its normal
-			// permission bits.
-			defer os.Chmod(filename, stat.Mode())
-		}
+		mode = stat.Mode().Perm()
 	}
 
-	abs, err := filepath.Abs(filename)
-	if err != nil {
-		return errors.New(tr.Tr.Get("could not produce absolute path for %q", filename))
+	if err := tools.RobustRemove(path); err != nil && !os.IsNotExist(err) {
+		return errors.Wrap(err, tr.Tr.Get("could not remove working directory file %q", path))
 	}
 
-	file, err := os.Create(abs)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
-		return errors.New(tr.Tr.Get("could not create working directory file: %v", err))
+		return errors.Wrap(err, tr.Tr.Get("could not create working directory file %q", path))
 	}
 	defer file.Close()
-	if _, err := f.Smudge(file, ptr, filename, download, manifest, cb); err != nil {
+	if _, err := f.Smudge(file, ptr.Pointer, ptr.Name, download, manifest, cb); err != nil {
 		if errors.IsDownloadDeclinedError(err) {
 			// write placeholder data instead
 			file.Seek(0, io.SeekStart)
@@ -117,21 +110,13 @@ func (f *GitFilter) downloadFile(writer io.Writer, ptr *Pointer, workingfile, me
 	q := tq.NewTransferQueue(tq.Download, manifest, f.cfg.Remote(),
 		tq.WithProgressCallback(cb),
 		tq.RemoteRef(f.RemoteRef()),
+		tq.WithBatchSize(f.cfg.TransferBatchSize()),
 	)
 	q.Add(filepath.Base(workingfile), mediafile, ptr.Oid, ptr.Size, false, nil)
 	q.Wait()
 
 	if errs := q.Errors(); len(errs) > 0 {
-		var multiErr error
-		for _, e := range errs {
-			if multiErr != nil {
-				multiErr = fmt.Errorf("%v\n%v", multiErr, e)
-			} else {
-				multiErr = e
-			}
-		}
-
-		return 0, errors.Wrapf(multiErr, tr.Tr.Get("Error downloading %s (%s)", workingfile, ptr.Oid))
+		return 0, errors.Wrap(errors.Join(errs...), tr.Tr.Get("Error downloading %s (%s)", workingfile, ptr.Oid))
 	}
 
 	return f.readLocalFile(writer, ptr, mediafile, workingfile, nil)
@@ -148,20 +133,13 @@ func (f *GitFilter) downloadFileFallBack(writer io.Writer, ptr *Pointer, working
 		q := tq.NewTransferQueue(tq.Download, manifest, remote,
 			tq.WithProgressCallback(cb),
 			tq.RemoteRef(f.RemoteRef()),
+			tq.WithBatchSize(f.cfg.TransferBatchSize()),
 		)
 		q.Add(filepath.Base(workingfile), mediafile, ptr.Oid, ptr.Size, false, nil)
 		q.Wait()
 
 		if errs := q.Errors(); len(errs) > 0 {
-			var multiErr error
-			for _, e := range errs {
-				if multiErr != nil {
-					multiErr = fmt.Errorf("%v\n%v", multiErr, e)
-				} else {
-					multiErr = e
-				}
-			}
-			wrappedError := errors.Wrapf(multiErr, tr.Tr.Get("Error downloading %s (%s)", workingfile, ptr.Oid))
+			wrappedError := errors.Wrap(errors.Join(errs...), tr.Tr.Get("Error downloading %s (%s)", workingfile, ptr.Oid))
 			if index >= len(remotes)-1 {
 				return 0, wrappedError
 			} else {
@@ -174,13 +152,13 @@ func (f *GitFilter) downloadFileFallBack(writer io.Writer, ptr *Pointer, working
 			return f.readLocalFile(writer, ptr, mediafile, workingfile, nil)
 		}
 	}
-	return 0, errors.Wrapf(errors.New("No known remotes"), tr.Tr.Get("Error downloading %s (%s)", workingfile, ptr.Oid))
+	return 0, errors.Wrap(errors.New(tr.Tr.Get("No known remotes")), tr.Tr.Get("Error downloading %s (%s)", workingfile, ptr.Oid))
 }
 
 func (f *GitFilter) readLocalFile(writer io.Writer, ptr *Pointer, mediafile string, workingfile string, cb tools.CopyCallback) (int64, error) {
 	reader, err := tools.RobustOpen(mediafile)
 	if err != nil {
-		return 0, errors.Wrapf(err, tr.Tr.Get("error opening media file"))
+		return 0, errors.Wrap(err, tr.Tr.Get("error opening media file"))
 	}
 	defer reader.Close()
 
@@ -248,14 +226,14 @@ func (f *GitFilter) readLocalFile(writer io.Writer, ptr *Pointer, mediafile stri
 		// setup reader
 		reader, err = os.Open(response.file.Name())
 		if err != nil {
-			return 0, errors.Wrapf(err, tr.Tr.Get("Error opening smudged file: %s", err))
+			return 0, errors.Wrap(err, tr.Tr.Get("Error opening smudged file: %s", err))
 		}
 		defer reader.Close()
 	}
 
 	n, err := tools.CopyWithCallback(writer, reader, ptr.Size, cb)
 	if err != nil {
-		return n, errors.Wrapf(err, tr.Tr.Get("Error reading from media file: %s", err))
+		return n, errors.Wrap(err, tr.Tr.Get("Error reading from media file: %s", err))
 	}
 
 	return n, nil

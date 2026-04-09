@@ -6,7 +6,10 @@ git-lfs-unlock - Remove "locked" setting for a file on the Git LFS server
 
 == SYNOPSIS
 
-`git lfs unlock` [<options>] <path>
+[source,role=synopsis,subs="verbatim,quotes"]
+----
+*git lfs unlock* [_<options>_] _<path>_
+----
 
 == DESCRIPTION
 
@@ -26,6 +29,7 @@ must exist and have a clean git status before they can be unlocked. The
 `-i <id>`::
 `--id=<id>`::
    Specifies a lock by its ID instead of path.
+`-j`::
 `--json`::
   Writes lock info as JSON to STDOUT if the command exits successfully. Intended
   for interoperation with external tools. If the command returns with a non-zero

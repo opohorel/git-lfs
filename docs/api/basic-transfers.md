@@ -27,7 +27,7 @@ response that looks like this:
           "header": {
             "Authorization": "Basic ..."
           },
-          "expires_in": 86400,
+          "expires_in": 86400
         }
       }
     }
@@ -140,5 +140,8 @@ Git LFS clients send:
 >
 < HTTP/1.1 200 OK
 ```
+
+The client may also include a `charset=utf-8` parameter in the
+`Content-Type` header, which servers should be prepared to accept.
 
 A 200 response means that the object exists on the server.

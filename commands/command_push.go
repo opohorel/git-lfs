@@ -36,8 +36,7 @@ var (
 // of commits between the local and remote git servers.
 func pushCommand(cmd *cobra.Command, args []string) {
 	if len(args) == 0 {
-		Print(tr.Tr.Get("Specify a remote and a remote branch name (`git lfs push origin main`)"))
-		os.Exit(1)
+		Exit(tr.Tr.Get("Specify a remote and a remote branch name (`git lfs push origin main`)"))
 	}
 
 	requireGitVersion()
@@ -52,8 +51,7 @@ func pushCommand(cmd *cobra.Command, args []string) {
 	var argList []string
 	if useStdin {
 		if len(args) > 1 {
-			Print(tr.Tr.Get("Further command line arguments are ignored with --stdin"))
-			os.Exit(1)
+			Exit(tr.Tr.Get("Further command line arguments are ignored with --stdin"))
 		}
 
 		scanner := bufio.NewScanner(os.Stdin) // line-delimited
@@ -157,6 +155,9 @@ func lfsPushRefs(refnames []string, pushAll bool) ([]*git.RefUpdate, error) {
 			refs[i] = git.NewRefUpdate(cfg.Git, cfg.PushRemote(), ref, nil)
 		} else {
 			ref := &git.Ref{Name: name, Type: git.RefTypeOther, Sha: name}
+			if _, err := git.ResolveRef(name); err != nil {
+				return nil, errors.New(tr.Tr.Get("Invalid ref argument: %v", name))
+			}
 			refs[i] = git.NewRefUpdate(cfg.Git, cfg.PushRemote(), ref, nil)
 		}
 	}

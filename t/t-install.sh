@@ -38,7 +38,7 @@ begin_test "install with old (non-upgradeable) settings"
   [ "${PIPESTATUS[0]}" = 2 ]
 
   grep -E "(clean|smudge)\" attribute should be" install.log
-  [ `grep -c "(MISSING)" install.log` = "0" ]
+  [ 0 -eq "$(grep -c "(MISSING)" install.log)" ]
 
   [ "git-lfs smudge --something %f" = "$(git config --global filter.lfs.smudge)" ]
   [ "git-lfs clean --something %f" = "$(git config --global filter.lfs.clean)" ]
@@ -74,19 +74,19 @@ begin_test "install updates repo hooks"
   git init
 
   pre_push_hook="#!/bin/sh
-command -v git-lfs >/dev/null 2>&1 || { echo >&2 \"\\nThis repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'pre-push' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').\\n\"; exit 2; }
+command -v git-lfs >/dev/null 2>&1 || { printf >&2 \"\\n%s\\n\\n\" \"This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'pre-push' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').\"; exit 2; }
 git lfs pre-push \"\$@\""
 
   post_checkout_hook="#!/bin/sh
-command -v git-lfs >/dev/null 2>&1 || { echo >&2 \"\\nThis repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-checkout' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').\\n\"; exit 2; }
+command -v git-lfs >/dev/null 2>&1 || { printf >&2 \"\\n%s\\n\\n\" \"This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-checkout' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').\"; exit 2; }
 git lfs post-checkout \"\$@\""
 
   post_commit_hook="#!/bin/sh
-command -v git-lfs >/dev/null 2>&1 || { echo >&2 \"\\nThis repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-commit' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').\\n\"; exit 2; }
+command -v git-lfs >/dev/null 2>&1 || { printf >&2 \"\\n%s\\n\\n\" \"This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-commit' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').\"; exit 2; }
 git lfs post-commit \"\$@\""
 
   post_merge_hook="#!/bin/sh
-command -v git-lfs >/dev/null 2>&1 || { echo >&2 \"\\nThis repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-merge' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').\\n\"; exit 2; }
+command -v git-lfs >/dev/null 2>&1 || { printf >&2 \"\\n%s\\n\\n\" \"This repository is configured for Git LFS but 'git-lfs' was not found on your path. If you no longer wish to use Git LFS, remove this hook by deleting the 'post-merge' file in the hooks directory (set by 'core.hookspath'; usually '.git/hooks').\"; exit 2; }
 git lfs post-merge \"\$@\""
 
   [ "Updated Git hooks.
@@ -174,8 +174,8 @@ begin_test "install outside repository directory"
   cat check.log
 
   # doesn't print this because being in a git repo is not necessary for install
-  [ "$(grep -c "Not in a Git repository" check.log)" = "0" ]
-  [ "$(grep -c "Error" check.log)" = "0" ]
+  [ 0 -eq "$(grep -c "Not in a Git repository" check.log)" ]
+  [ 0 -eq "$(grep -c "Error" check.log)" ]
 )
 end_test
 

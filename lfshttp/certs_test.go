@@ -2,7 +2,6 @@ package lfshttp
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -57,7 +56,7 @@ func clientForHost(c *Client, host string) *http.Client {
 }
 
 func TestCertFromSSLCAInfoConfig(t *testing.T) {
-	tempfile, err := ioutil.TempFile("", "testcert")
+	tempfile, err := os.CreateTemp("", "testcert")
 	assert.Nil(t, err, "Error creating temp cert file")
 	defer os.Remove(tempfile.Name())
 
@@ -74,7 +73,7 @@ func TestCertFromSSLCAInfoConfig(t *testing.T) {
 		assert.Nil(t, err)
 
 		for _, matchedHostTest := range sslCAInfoMatchedHostTests {
-			pool := getRootCAsForHost(c, matchedHostTest.hostName)
+			pool := getRootCAsForHostFromGitconfig(c, matchedHostTest.hostName)
 
 			var shouldOrShouldnt string
 			if matchedHostTest.shouldMatch {
@@ -97,13 +96,13 @@ func TestCertFromSSLCAInfoConfig(t *testing.T) {
 
 	// Should match any host at all
 	for _, matchedHostTest := range sslCAInfoMatchedHostTests {
-		pool := getRootCAsForHost(c, matchedHostTest.hostName)
+		pool := getRootCAsForHostFromGitconfig(c, matchedHostTest.hostName)
 		assert.NotNil(t, pool)
 	}
 }
 
 func TestCertFromSSLCAInfoEnv(t *testing.T) {
-	tempfile, err := ioutil.TempFile("", "testcert")
+	tempfile, err := os.CreateTemp("", "testcert")
 	assert.Nil(t, err, "Error creating temp cert file")
 	defer os.Remove(tempfile.Name())
 
@@ -118,13 +117,13 @@ func TestCertFromSSLCAInfoEnv(t *testing.T) {
 
 	// Should match any host at all
 	for _, matchedHostTest := range sslCAInfoMatchedHostTests {
-		pool := getRootCAsForHost(c, matchedHostTest.hostName)
+		pool := getRootCAsForHostFromGitconfig(c, matchedHostTest.hostName)
 		assert.NotNil(t, pool)
 	}
 }
 
 func TestCertFromSSLCAInfoEnvIsIgnoredForSchannelBackend(t *testing.T) {
-	tempfile, err := ioutil.TempFile("", "testcert")
+	tempfile, err := os.CreateTemp("", "testcert")
 	assert.Nil(t, err, "Error creating temp cert file")
 	defer os.Remove(tempfile.Name())
 
@@ -141,13 +140,13 @@ func TestCertFromSSLCAInfoEnvIsIgnoredForSchannelBackend(t *testing.T) {
 
 	// Should match any host at all
 	for _, matchedHostTest := range sslCAInfoMatchedHostTests {
-		pool := getRootCAsForHost(c, matchedHostTest.hostName)
+		pool := getRootCAsForHostFromGitconfig(c, matchedHostTest.hostName)
 		assert.Nil(t, pool)
 	}
 }
 
 func TestCertFromSSLCAInfoEnvWithSchannelBackend(t *testing.T) {
-	tempfile, err := ioutil.TempFile("", "testcert")
+	tempfile, err := os.CreateTemp("", "testcert")
 	assert.Nil(t, err, "Error creating temp cert file")
 	defer os.Remove(tempfile.Name())
 
@@ -165,17 +164,15 @@ func TestCertFromSSLCAInfoEnvWithSchannelBackend(t *testing.T) {
 
 	// Should match any host at all
 	for _, matchedHostTest := range sslCAInfoMatchedHostTests {
-		pool := getRootCAsForHost(c, matchedHostTest.hostName)
+		pool := getRootCAsForHostFromGitconfig(c, matchedHostTest.hostName)
 		assert.NotNil(t, pool)
 	}
 }
 
 func TestCertFromSSLCAPathConfig(t *testing.T) {
-	tempdir, err := ioutil.TempDir("", "testcertdir")
-	assert.Nil(t, err, "Error creating temp cert dir")
-	defer os.RemoveAll(tempdir)
+	tempdir := t.TempDir()
 
-	err = ioutil.WriteFile(filepath.Join(tempdir, "cert1.pem"), []byte(testCert), 0644)
+	err := os.WriteFile(filepath.Join(tempdir, "cert1.pem"), []byte(testCert), 0644)
 	assert.Nil(t, err, "Error creating cert file")
 
 	c, err := NewClient(NewContext(nil, nil, map[string]string{
@@ -186,17 +183,15 @@ func TestCertFromSSLCAPathConfig(t *testing.T) {
 
 	// Should match any host at all
 	for _, matchedHostTest := range sslCAInfoMatchedHostTests {
-		pool := getRootCAsForHost(c, matchedHostTest.hostName)
+		pool := getRootCAsForHostFromGitconfig(c, matchedHostTest.hostName)
 		assert.NotNil(t, pool)
 	}
 }
 
 func TestCertFromSSLCAPathEnv(t *testing.T) {
-	tempdir, err := ioutil.TempDir("", "testcertdir")
-	assert.Nil(t, err, "Error creating temp cert dir")
-	defer os.RemoveAll(tempdir)
+	tempdir := t.TempDir()
 
-	err = ioutil.WriteFile(filepath.Join(tempdir, "cert1.pem"), []byte(testCert), 0644)
+	err := os.WriteFile(filepath.Join(tempdir, "cert1.pem"), []byte(testCert), 0644)
 	assert.Nil(t, err, "Error creating cert file")
 
 	c, err := NewClient(NewContext(nil, map[string]string{
@@ -206,7 +201,7 @@ func TestCertFromSSLCAPathEnv(t *testing.T) {
 
 	// Should match any host at all
 	for _, matchedHostTest := range sslCAInfoMatchedHostTests {
-		pool := getRootCAsForHost(c, matchedHostTest.hostName)
+		pool := getRootCAsForHostFromGitconfig(c, matchedHostTest.hostName)
 		assert.NotNil(t, pool)
 	}
 }

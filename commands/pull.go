@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/git-lfs/git-lfs/v3/config"
@@ -11,30 +12,36 @@ import (
 	"github.com/git-lfs/git-lfs/v3/git"
 	"github.com/git-lfs/git-lfs/v3/lfs"
 	"github.com/git-lfs/git-lfs/v3/subprocess"
+	"github.com/git-lfs/git-lfs/v3/tools"
 	"github.com/git-lfs/git-lfs/v3/tq"
 	"github.com/git-lfs/git-lfs/v3/tr"
 )
 
 // Handles the process of checking out a single file, and updating the git
 // index.
+// Note that the current working directory will be changed to the root
+// of the working tree, unless no work tree exists (e.g., the repository
+// is bare and GIT_WORK_TREE is not defined), in which case Run() is a no-op.
 func newSingleCheckout(gitEnv config.Environment, remote string) abstractCheckout {
 	clean, ok := gitEnv.Get("filter.lfs.clean")
 	if !ok || len(clean) == 0 {
 		return &noOpCheckout{remote: remote}
 	}
 
-	// Get a converter from repo-relative to cwd-relative
-	// Since writing data & calling git update-index must be relative to cwd
-	pathConverter, err := lfs.NewRepoToCurrentPathConverter(cfg)
-	if err != nil {
-		Panic(err, tr.Tr.Get("Could not convert file paths"))
+	workingDir := cfg.LocalWorkingDir()
+	hasWorkTree := workingDir != ""
+	if hasWorkTree {
+		if err := os.Chdir(workingDir); err != nil {
+			FullError(errors.Wrap(err, tr.Tr.Get("Checkout error trying to change directory: %s", workingDir)))
+			hasWorkTree = false
+		}
 	}
 
 	return &singleCheckout{
-		gitIndexer:    &gitIndexer{},
-		pathConverter: pathConverter,
-		manifest:      nil,
-		remote:        remote,
+		gitIndexer:  &gitIndexer{},
+		hasWorkTree: hasWorkTree,
+		manifest:    nil,
+		remote:      remote,
 	}
 }
 
@@ -47,10 +54,10 @@ type abstractCheckout interface {
 }
 
 type singleCheckout struct {
-	gitIndexer    *gitIndexer
-	pathConverter lfs.PathConverter
-	manifest      tq.Manifest
-	remote        string
+	gitIndexer  *gitIndexer
+	hasWorkTree bool
+	manifest    tq.Manifest
+	remote      string
 }
 
 func (c *singleCheckout) Manifest() tq.Manifest {
@@ -65,18 +72,45 @@ func (c *singleCheckout) Skip() bool {
 }
 
 func (c *singleCheckout) Run(p *lfs.WrappedPointer) {
-	cwdfilepath := c.pathConverter.Convert(p.Name)
+	if !c.hasWorkTree {
+		return
+	}
 
-	// Check the content - either missing or still this pointer (not exist is ok)
-	filepointer, err := lfs.DecodePointerFromFile(cwdfilepath)
-	if err != nil && !os.IsNotExist(err) {
-		if errors.IsNotAPointerError(err) || errors.IsBadPointerKeyError(err) {
-			// File has non-pointer content, leave it alone
+	dirWalker := tools.NewDirWalkerForFile("", p.Name, cfg)
+	err := dirWalker.Walk()
+
+	var filepointer *lfs.Pointer
+	if err != nil {
+		if !os.IsNotExist(err) {
+			LoggedError(err, tr.Tr.Get("Checkout error trying to check path for %q: %s", p.Name, err))
 			return
 		}
+	} else {
+		// Check the content - either missing or still this pointer (not exist is ok)
+		filepointer, err = lfs.DecodePointerFromFile(p.Name)
+	}
 
-		LoggedError(err, tr.Tr.Get("Checkout error: %s", err))
-		return
+	if err != nil {
+		if os.IsNotExist(err) {
+			output, err := git.DiffIndexWithPaths("HEAD", true, []string{p.Name})
+			if err != nil {
+				LoggedError(err, tr.Tr.Get("Checkout error trying to run diff-index: %s", err))
+				return
+			}
+			if strings.HasPrefix(output, ":100644 000000 ") || strings.HasPrefix(output, ":100755 000000 ") {
+				// This file is deleted in the index.  Don't try
+				// to check it out.
+				return
+			}
+		} else {
+			if errors.IsNotAPointerError(err) || errors.IsBadPointerKeyError(err) {
+				// File has non-pointer content, leave it alone
+				return
+			}
+
+			LoggedError(err, tr.Tr.Get("Checkout error for %q: %s", p.Name, err))
+			return
+		}
 	}
 
 	if filepointer != nil && filepointer.Oid != p.Oid {
@@ -85,18 +119,25 @@ func (c *singleCheckout) Run(p *lfs.WrappedPointer) {
 		return
 	}
 
-	if err := c.RunToPath(p, cwdfilepath); err != nil {
+	if err != nil && os.IsNotExist(err) {
+		if err := dirWalker.WalkAndCreate(); err != nil {
+			LoggedError(err, tr.Tr.Get("Checkout error trying to create path for %q: %s", p.Name, err))
+			return
+		}
+	}
+
+	if err := c.RunToPath(p, p.Name); err != nil {
 		if errors.IsDownloadDeclinedError(err) {
 			// acceptable error, data not local (fetch not run or include/exclude)
 			Error(tr.Tr.Get("Skipped checkout for %q, content not local. Use fetch to download.", p.Name))
 		} else {
-			FullError(errors.New(tr.Tr.Get("could not check out %q", p.Name)))
+			FullError(errors.Wrap(err, tr.Tr.Get("could not check out %q", p.Name)))
 		}
 		return
 	}
 
 	// errors are only returned when the gitIndexer is starting a new cmd
-	if err := c.gitIndexer.Add(cwdfilepath); err != nil {
+	if err := c.gitIndexer.Add(p.Name); err != nil {
 		Panic(err, tr.Tr.Get("Could not update the index"))
 	}
 }
@@ -105,7 +146,7 @@ func (c *singleCheckout) Run(p *lfs.WrappedPointer) {
 // not perform any sort of sanity checking or add the path to the index.
 func (c *singleCheckout) RunToPath(p *lfs.WrappedPointer, path string) error {
 	gitfilter := lfs.NewGitFilter(cfg)
-	return gitfilter.SmudgeToFile(path, p.Pointer, false, c.manifest, nil)
+	return gitfilter.SmudgeToFile(path, p, false, c.manifest, nil)
 }
 
 func (c *singleCheckout) Close() {
